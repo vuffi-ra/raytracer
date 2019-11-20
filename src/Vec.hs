@@ -10,7 +10,7 @@ module Vec
 
 import Control.Applicative
 
-data V3 a = V3 a a a 
+data V3 a = V3 { x:: a, y :: a, z :: a } deriving (Show)
 
 instance Functor V3 where
     fmap f (V3 a b c)= V3 (f a) (f b) (f c)
