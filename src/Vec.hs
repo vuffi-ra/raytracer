@@ -5,7 +5,8 @@ module Vec
     Vec.length,
     (.*),
     (/.),
-    unit
+    unit,
+    dot,
     ) where
 
 import Control.Applicative
@@ -53,9 +54,11 @@ instance Floating a => Floating (V3 a) where
 a /. b = recip b .* a
 
 length :: Floating a => V3 a -> a
-length (V3 a b c) = sqrt (a**2 + b**2 + c**2)
+length a = sqrt (dot a a)
 
 unit :: Floating a => V3 a -> V3 a
 unit v = v /. (Vec.length v)
 
+dot :: Num a => V3 a -> V3 a -> a
+dot (V3 a b c) (V3 a' b' c') = a * a' + b * b' + c * c'
     
