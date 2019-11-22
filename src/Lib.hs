@@ -5,15 +5,23 @@ module Lib
 import Vec
 import Data.Maybe
 import Data.List
+import System.Random
 
-data Ray = Ray { origin :: V3 Double, direction :: V3 Double }
+data Ray = Ray (V3 Double) (V3 Double)
 
-data Shape = Sphere { center :: V3 Double, radius :: Double }
+data Shape = Sphere (V3 Double) Double
 
 data Intersection = Intersection
-    { rayParam :: Double
-    , point :: V3 Double
-    , normal :: V3 Double
+    { intersectParam :: Double
+    , intersectPoint :: V3 Double
+    , intersectNormal :: V3 Double
+    }
+
+data Camera = Camera
+    { cameraOrigin :: V3 Double
+    , cameraLowerLeftCorner :: V3 Double
+    , cameraHorizontal :: V3 Double
+    , cameraVertical :: V3 Double
     }
 
 -- A sphere with radius r around the origin is described by x*x + y*y + z^z = r *r.
@@ -59,26 +67,54 @@ closestIntersection :: Ray -> [Shape] -> Maybe Intersection
 closestIntersection r ss = 
     case (intersections r ss) of 
         [] -> Nothing
-        xs -> Just $ minimumBy (\a b -> compare (rayParam a) (rayParam b)) xs
+        xs -> Just $ minimumBy (\a b -> compare (intersectParam a) (intersectParam b)) xs
+
+raysFromPixel :: Camera -> (Int, Int) -> [(Double, Double)] -> (Int, Int) -> [Ray]
+raysFromPixel c (width, height) offsets (x, y) = let
+    x' = fromIntegral x
+    y' = fromIntegral y
+    width' = fromIntegral width
+    height' = fromIntegral height
+    toUV (a, b) (o, o') = ((a + o) / width', (b + o') / height')
+    uvs = fmap (toUV (x', y')) offsets
+    ray c (u, v) = Ray origin (corner + u .* horizontal + v .* vertical - origin)
+        where
+            origin = cameraOrigin c
+            horizontal = cameraHorizontal c
+            vertical = cameraVertical c
+            corner = cameraLowerLeftCorner c
+    in fmap (ray c) $ uvs
+
+chunks :: Int -> [a] -> [[a]]
+chunks n [] = []
+chunks 0 xs = [xs]
+chunks n xs = chunk : chunks n rest where
+    (chunk, rest) = splitAt n xs
 
 raytracer :: IO ()
 raytracer = let
         width = (200 :: Int)
         height = (100 :: Int)
-        lowerLeft = V3 (-2) (-1) (-1)
-        horizontal = V3 4 0 0
-        vertical = V3 0 2 0
-        o = V3 0 0 0
+        camera = Camera (V3 0 0 0) (V3 (-2) (-1) (-1)) (V3 4 0 0) (V3 0 2 0)
         spheres = [ (Sphere (V3 0 0 (-1)) 0.5), (Sphere (V3 0 (-100.5) (-1)) 100) ]
-        ray u v = Ray o (lowerLeft + u .* horizontal + v .* vertical)
-        rays = 
-            flip ray 
-            <$> [ (fromIntegral c) / (fromIntegral height) | c <- [height - 1, height - 2..0]]
-            <*> [ (fromIntegral c) / (fromIntegral width) | c <- [0..width - 1]] 
-        out = concat $ fmap (colorToString . (flip colorFromRay) spheres) rays
+        raysPerPixel = (100 :: Int)
+        -- Reversed, so that the order of pixels aligns with the order of pixels
+        -- int the output file
+        rows = [height - 1, height - 2 .. 0]
+        cols = [0 .. width - 1]
+        pixels = [ (x, y) | y <- rows, x <- cols ]
+        innerTrace = (flip trace) spheres
+        rays = raysFromPixel camera (width, height)
     in do
+        rng <- getStdGen
+        let (rng1, rng2) = split rng
+        let offsets = chunks raysPerPixel $ zip (randoms rng1) (randoms rng2)
+        let offsetRays = fmap rays offsets
+        let rayGroups = zipWith ($) offsetRays pixels
+        let colors = fmap (\group -> (sum $ fmap innerTrace group) `vdiv` raysPerPixel) rayGroups
         let header = "P3\n200 100\n255\n"
-        writeFile "/home/markus/out.ppm" (header ++ out)
+        let content = concat $ (fmap colorToString colors)
+        writeFile "/home/markus/out.ppm" (header ++ content)
 
 colorToString :: V3 Int -> String
 colorToString (V3 r g b) = (show r) ++ " " ++ (show g) ++ " " ++ (show b) ++ " "
@@ -94,9 +130,9 @@ backgroundGradient (Ray _ d) = fmap round $ (1 - t) .* white + t .* blue
         (V3 _ y _) = unit d
         t = 0.5 * (y + 1)
 
-colorFromRay :: Ray -> [Shape] -> V3 Int
-colorFromRay r ss = 
-    maybe background (normalToColor . normal) $ (closestIntersection r ss)
+trace :: Ray -> [Shape] -> V3 Int
+trace r ss = 
+    maybe background (normalToColor . intersectNormal) $ (closestIntersection r ss)
     where
         background = backgroundGradient r
         normalToColor n = fmap (round . (*) 255) $ 0.5 .* ((V3 1 1 1) + n)

@@ -7,6 +7,7 @@ module Vec
     (/.),
     unit,
     dot,
+    vdiv,
     ) where
 
 import Control.Applicative
@@ -52,6 +53,9 @@ instance Floating a => Floating (V3 a) where
 
 (/.) :: Fractional a => V3 a -> a -> V3 a
 a /. b = recip b .* a
+
+vdiv :: Integral a => V3 a -> a -> V3 a
+vdiv v a = fmap ((flip div) a) v
 
 length :: Floating a => V3 a -> a
 length a = sqrt (dot a a)
