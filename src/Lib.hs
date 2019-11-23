@@ -6,6 +6,10 @@ import Vec
 import Data.Maybe
 import Data.List
 import System.Random
+import Data.Word (Word8)
+
+data Color = RGB (V3 Double)
+data Color24 = RGB24 (V3 Word8)
 
 data Ray = Ray (V3 Double) (V3 Double)
 
@@ -111,29 +115,37 @@ raytracer = let
         let offsets = chunks raysPerPixel $ zip (randoms rng1) (randoms rng2)
         let offsetRays = fmap rays offsets
         let rayGroups = zipWith ($) offsetRays pixels
-        let colors = fmap (\group -> (sum $ fmap innerTrace group) `vdiv` raysPerPixel) rayGroups
+        let colors = fmap (\group -> averageColor $ fmap innerTrace group) rayGroups
         let header = "P3\n200 100\n255\n"
         let content = concat $ (fmap colorToString colors)
         writeFile "/home/markus/out.ppm" (header ++ content)
 
-colorToString :: V3 Int -> String
-colorToString (V3 r g b) = (show r) ++ " " ++ (show g) ++ " " ++ (show b) ++ " "
+colorToString :: Color -> String
+colorToString c = (show r) ++ " " ++ (show g) ++ " " ++ (show b) ++ " "
+    where (RGB24 (V3 r g b)) = toPPM c
+
+toPPM :: Color -> Color24
+toPPM (RGB v) = RGB24 $ fmap (fromIntegral . round) (255 .* v)
+
+averageColor :: [Color] -> Color
+averageColor cs = RGB $ (combined /. (fromIntegral $ Data.List.length cs)) where
+    combined = sum $ fmap (\(RGB v) -> v) cs
 
 at :: Ray -> Double -> V3 Double
 at (Ray o d) t = o + t .* d
 
-backgroundGradient :: Ray -> V3 Int
-backgroundGradient (Ray _ d) = fmap round $ (1 - t) .* white + t .* blue
+backgroundGradient :: Ray -> Color
+backgroundGradient (Ray _ d) = RGB $ (1 - t) .* white + t .* blue
     where
-        white = V3 255 255 255
-        blue = V3 120 200 255
+        white = V3 1 1 1
+        blue = V3 0.5 0.7 1
         (V3 _ y _) = unit d
         t = 0.5 * (y + 1)
 
-trace :: Ray -> [Shape] -> V3 Int
+trace :: Ray -> [Shape] -> Color
 trace r ss = 
     maybe background (normalToColor . intersectNormal) $ (closestIntersection r ss)
     where
         background = backgroundGradient r
-        normalToColor n = fmap (round . (*) 255) $ 0.5 .* ((V3 1 1 1) + n)
+        normalToColor n = RGB $ 0.5 .* ((V3 1 1 1) + n)
 
