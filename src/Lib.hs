@@ -81,16 +81,16 @@ raysFromPixel c (width, height) offsets (x, y) = let
     height' = fromIntegral height
     toUV (a, b) (o, o') = ((a + o) / width', (b + o') / height')
     uvs = fmap (toUV (x', y')) offsets
-    ray c (u, v) = Ray origin (corner + u .* horizontal + v .* vertical - origin)
+    ray (u, v) = Ray origin (corner + u .* horizontal + v .* vertical - origin)
         where
             origin = cameraOrigin c
             horizontal = cameraHorizontal c
             vertical = cameraVertical c
             corner = cameraLowerLeftCorner c
-    in fmap (ray c) $ uvs
+    in fmap ray $ uvs
 
 chunks :: Int -> [a] -> [[a]]
-chunks n [] = []
+chunks _ [] = []
 chunks 0 xs = [xs]
 chunks n xs = chunk : chunks n rest where
     (chunk, rest) = splitAt n xs
@@ -103,7 +103,7 @@ raytracer = let
         spheres = [ (Sphere (V3 0 0 (-1)) 0.5), (Sphere (V3 0 (-100.5) (-1)) 100) ]
         raysPerPixel = (100 :: Int)
         -- Reversed, so that the order of pixels aligns with the order of pixels
-        -- int the output file
+        -- in the output file
         rows = [height - 1, height - 2 .. 0]
         cols = [0 .. width - 1]
         pixels = [ (x, y) | y <- rows, x <- cols ]
@@ -115,7 +115,7 @@ raytracer = let
         let offsets = chunks raysPerPixel $ zip (randoms rng1) (randoms rng2)
         let offsetRays = fmap rays offsets
         let rayGroups = zipWith ($) offsetRays pixels
-        let colors = fmap (\group -> averageColor $ fmap innerTrace group) rayGroups
+        let colors = fmap (\rayGroup -> averageColor $ fmap innerTrace rayGroup) rayGroups
         let header = "P3\n200 100\n255\n"
         let content = concat $ (fmap colorToString colors)
         writeFile "/home/markus/out.ppm" (header ++ content)
@@ -125,7 +125,9 @@ colorToString c = (show r) ++ " " ++ (show g) ++ " " ++ (show b) ++ " "
     where (RGB24 (V3 r g b)) = toPPM c
 
 toPPM :: Color -> Color24
-toPPM (RGB v) = RGB24 $ fmap (fromIntegral . round) (255 .* v)
+toPPM (RGB v) = RGB24 $ toWord8 <$> (255.0 .* v) where
+    toWord8 :: Double -> Word8
+    toWord8 = fromIntegral . (round :: Double -> Integer)
 
 averageColor :: [Color] -> Color
 averageColor cs = RGB $ (combined /. (fromIntegral $ Data.List.length cs)) where
