@@ -7,9 +7,7 @@ import Data.Maybe
 import Data.List
 import System.Random
 import Data.Word (Word8)
-
-data Color = RGB (V3 Double)
-data Color24 = RGB24 (V3 Word8)
+import Control.Monad (ap, replicateM, liftM2)
 
 data Ray = Ray (V3 Double) (V3 Double)
 
@@ -33,6 +31,19 @@ data Camera = Camera
     }
 
 data AntiAliasingPattern = Pattern [(Double, Double)]
+
+newtype Rand a = Rand { runRand :: StdGen -> (a, StdGen) }
+
+instance Functor Rand where
+    fmap f (Rand r) = Rand $ (\g -> let (a, g') = r g in (f a, g'))
+
+instance Applicative Rand where
+    pure = return
+    (<*>) = ap
+
+instance Monad Rand where
+    return x = Rand $ \g -> (x, g)
+    x >>= y = Rand $ \g -> let (a, g') = runRand x g in runRand (y a) g'
 
 -- A sphere with radius r around the origin is described by x*x + y*y + z^z = r *r.
 -- A sphere with radius r at cx, cy, cz is described by (x - cx)^2 + (y - cy)^2 + (z - cz)^2 = r^2
@@ -95,9 +106,15 @@ raysFromPixel c (width, height) (Pattern offsets) (x, y) = let
             corner = cameraLowerLeftCorner c
     in fmap ray $ uvs
 
-randomAAPatterns :: RandomGen g => g -> Int -> AntiAliasingPattern
-randomAAPatterns g n = Pattern $ take n (zip (randoms g1) (randoms g2)) where
-    (g1, g2) = split g
+
+rand :: Random a => Rand a
+rand = Rand (\g -> random g)
+
+randTuple :: Random a => Rand (a, a)
+randTuple = liftM2 (,) rand rand
+
+randomAAPattern :: Int -> Rand AntiAliasingPattern
+randomAAPattern n = fmap Pattern $ replicateM n randTuple
 
 raytracer :: IO ()
 raytracer = let
@@ -113,13 +130,10 @@ raytracer = let
         cols = [0 .. width - 1]
         pixels = [ (x, y) | y <- rows, x <- cols ]
         rays = raysFromPixel camera (width, height)
-        patternGen = (flip randomAAPatterns) raysPerPixel
     in do
         rng <- getStdGen
-        let (aaRng, traceRng) = split rng
-        let aaRngs = unfoldr (\a -> Just $ split a) aaRng
-        let traceRngs = unfoldr (\a -> Just $ split a) traceRng
-        let aaPatterns = patternGen <$> aaRngs
+        let (aaPatterns, rng') = runRand (replicateM (Data.List.length pixels) (randomAAPattern raysPerPixel)) rng
+        let traceRngs = unfoldr (\a -> Just $ split a) rng'
         let rayGroups = zipWith3 ($) (repeat rays) aaPatterns pixels
         let colors = averageColor <$> (zipWith4 ($) (repeat traceRays) traceRngs (repeat spheres) rayGroups)
         let header = "P3\n" ++ (show width) ++ " " ++ (show height) ++ "\n255\n"
