@@ -2,7 +2,7 @@
 module Vec
     (
     V3(..),
-    Vec.length,
+    Vec.norm,
     (.*),
     (/.),
     unit,
@@ -53,11 +53,11 @@ instance Floating a => Floating (V3 a) where
 (/.) :: Fractional a => V3 a -> a -> V3 a
 a /. b = recip b .* a
 
-length :: Floating a => V3 a -> a
-length a = sqrt (dot a a)
+norm :: Floating a => V3 a -> a
+norm a = sqrt (dot a a)
 
 unit :: Floating a => V3 a -> V3 a
-unit v = v /. (Vec.length v)
+unit v = v /. (norm v)
 
 dot :: Num a => V3 a -> V3 a -> a
 dot (V3 a b c) (V3 a' b' c') = a * a' + b * b' + c * c'

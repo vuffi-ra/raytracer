@@ -4,15 +4,16 @@ module Lib
 
 import Vec
 import Data.Maybe
-import Data.List
 import System.Random
 import Data.Word (Word8)
-import Control.Monad (ap, replicateM, liftM2)
+import Control.Monad (ap, replicateM)
+import Control.Applicative (ZipList(..))
+import Data.List (minimumBy)
 
 data Ray = Ray (V3 Double) (V3 Double)
 
 data Albedo = Albedo (V3 Double)
-data Material = Diffuse Albedo
+data Material = Diffuse Albedo | Reflective Albedo
 
 data Shape = Sphere (V3 Double) Double Material
 
@@ -82,7 +83,7 @@ intersects r@(Ray origin direction) (Sphere center radius material) =
         closestPointAlongRay = (-b - sqrt (b**2 - 4 * a * c)) / (2 * a)
 
 intersections :: Ray -> [Shape] -> [Intersection]
-intersections r ss = fromJust <$> (filter isJust $ (intersects r) <$> ss)
+intersections r ss = fromJust <$> (filter isJust$ intersects r <$> ss)
 
 closestIntersection :: Ray -> [Shape] -> Maybe Intersection
 closestIntersection r ss = 
@@ -110,8 +111,10 @@ raysFromPixel c (width, height) (Pattern offsets) (x, y) = let
 rand :: Random a => Rand a
 rand = Rand (\g -> random g)
 
+
 randTuple :: Random a => Rand (a, a)
-randTuple = liftM2 (,) rand rand
+randTuple = (,) <$> rand <*> rand
+
 
 randomAAPattern :: Int -> Rand AntiAliasingPattern
 randomAAPattern n = fmap Pattern $ replicateM n randTuple
@@ -121,9 +124,10 @@ raytracer = let
         width = (400 :: Int)
         height = (200 :: Int)
         camera = Camera (V3 0 0 0) (V3 (-2) (-1) (-1)) (V3 4 0 0) (V3 0 2 0)
-        material = Diffuse (Albedo (V3 0.5 0.5 0.5))
-        spheres = [ (Sphere (V3 0 0 (-1)) 0.5) material, (Sphere (V3 0 (-100.5) (-1)) 100) material ]
-        raysPerPixel = (20 :: Int)
+        diffuse = Diffuse (Albedo (V3 0.5 0.5 0.5))
+        metal = Reflective (Albedo (V3 1 1 1))
+        spheres = [ (Sphere (V3 0 0 (-120)) 20) diffuse, (Sphere (V3 0 (-140.5) (-120)) 100 diffuse) ]
+        raysPerPixel = (10 :: Int)
         -- Reversed, so that the order of pixels aligns with the order of pixels
         -- in the output file
         rows = [height - 1, height - 2 .. 0]
@@ -132,10 +136,10 @@ raytracer = let
         rays = raysFromPixel camera (width, height)
     in do
         rng <- getStdGen
-        let (aaPatterns, rng') = runRand (replicateM (Data.List.length pixels) (randomAAPattern raysPerPixel)) rng
-        let traceRngs = unfoldr (\a -> Just $ split a) rng'
-        let rayGroups = zipWith3 ($) (repeat rays) aaPatterns pixels
-        let colors = averageColor <$> (zipWith4 ($) (repeat traceRays) traceRngs (repeat spheres) rayGroups)
+        let (aaPatterns, _) = runRand (replicateM (length pixels) (randomAAPattern raysPerPixel)) rng
+        let rayGroups = rays <$> (ZipList aaPatterns) <*> (ZipList pixels)
+        let colors = averageColor <$> traceRays spheres <$> rayGroups
+
         let header = "P3\n" ++ (show width) ++ " " ++ (show height) ++ "\n255\n"
         let content = concat $ (fmap (colorToString . gammaCorrection) colors)
         writeFile "/home/markus/out.ppm" (header ++ content)
@@ -152,8 +156,7 @@ gammaCorrection :: V3 Double -> V3 Double
 gammaCorrection = fmap sqrt
 
 averageColor :: [V3 Double] -> V3 Double
-averageColor vs = combined /. (fromIntegral $ Data.List.length vs) where
-    combined = sum vs
+averageColor vs = (sum vs) /. (fromIntegral $ length vs) where
 
 at :: Ray -> Double -> V3 Double
 at (Ray o d) t = o + t .* d
@@ -166,34 +169,46 @@ backgroundGradient (Ray _ d) = (1 - t) .* white + t .* blue
         (V3 _ y _) = unit d
         t = 0.5 * (y + 1)
 
--- Via https://math.stackexchange.com/a/1586185
-randomInUnitSphere :: RandomGen g => g -> V3 Double
-randomInUnitSphere g = V3 x y z where
-    a, b :: Double
-    (a, g') = random g 
-    (b, _) = random g'
-    lambda = acos (2 * a - 1) - (pi / 2)
-    theta = 2 * pi * b
-    x = (cos lambda) * (cos theta)
-    y = (cos lambda) * (sin theta)
-    z = sin lambda
+--                          
+--     v \           /      
+--        \         /^      
+--         \   ^   / .      
+--          \  |n /  .      
+--          .\ | /   . 2 * b * n
+--  len b ~>. \|/    .      
+--   ---------->-----------
+--             |\    ^     
+--             | \   .     
+--             |  \  .     
+--             |   \ .     
+--             |    \.     
+--             |     \     
+mirrorAlong :: V3 Double -> V3 Double -> V3 Double
+mirrorAlong n x = x - (2 * b .* n) where b = dot x $ unit n
 
-traceRays :: RandomGen g => g -> [Shape] -> [Ray] -> [V3 Double]
-traceRays g shapes rays = 
-    let
-        rngs = unfoldr (\a -> Just $ split a) g
-    in
-        zipWith4 ($) (repeat traceRay) rngs (repeat shapes) rays
+traceRays :: [Shape] -> [Ray] -> [V3 Double]
+traceRays shapes = fmap (traceRay shapes)
 
-traceRay :: RandomGen g => g -> [Shape] -> Ray -> V3 Double
-traceRay g ss r = case closestIntersection r ss of
+traceRay :: [Shape] -> Ray -> V3 Double
+traceRay = traceRay' 0
+
+traceRay' :: Int -> [Shape] -> Ray -> V3 Double
+traceRay' 5  _ r = backgroundGradient r
+traceRay' depth ss r@(Ray _ d) = case closestIntersection r ss of
     Nothing -> backgroundGradient r
-    Just (Intersection _ p _ m) -> case m of
+    Just (Intersection _ p n m) -> case m of
         Diffuse (Albedo albedo) -> 
-            let 
-                (g', g'') = split g
-                target = randomInUnitSphere g'
-                ray = Ray p (target - p)
+            -- NOTE: This assumes a single hardcoded unidirectional light
+            let
+                lightDir = unit $ V3 0 0 (-1)
+                lightColor = V3 1 1 1
+                cosTheta = max (dot n (-lightDir)) 0
             in
-                albedo * traceRay g'' ss ray
+                cosTheta .* (albedo /. pi) * lightColor
+        Reflective (Albedo albedo) ->
+            let
+                reflected = Ray p (mirrorAlong n d)
+                color = traceRay' (depth + 1) ss reflected
+            in
+                albedo * color
 
