@@ -82,14 +82,17 @@ intersects r@(Ray origin direction) (Sphere center radius material) =
         discriminant = b**2 - 4 * a * c
         closestPointAlongRay = (-b - sqrt (b**2 - 4 * a * c)) / (2 * a)
 
+
 intersections :: Ray -> [Shape] -> [Intersection]
 intersections r ss = fromJust <$> (filter isJust$ intersects r <$> ss)
+
 
 closestIntersection :: Ray -> [Shape] -> Maybe Intersection
 closestIntersection r ss = 
     case (intersections r ss) of 
         [] -> Nothing
         xs -> Just $ minimumBy (\a b -> compare (intersectParam a) (intersectParam b)) xs
+
 
 raysFromPixel :: Camera -> (Int, Int) -> AntiAliasingPattern -> (Int, Int) -> [Ray]
 raysFromPixel c (width, height) (Pattern offsets) (x, y) = let
@@ -109,7 +112,7 @@ raysFromPixel c (width, height) (Pattern offsets) (x, y) = let
 
 
 rand :: Random a => Rand a
-rand = Rand (\g -> random g)
+rand = Rand $ random
 
 
 randTuple :: Random a => Rand (a, a)
@@ -118,6 +121,7 @@ randTuple = (,) <$> rand <*> rand
 
 randomAAPattern :: Int -> Rand AntiAliasingPattern
 randomAAPattern n = fmap Pattern $ replicateM n randTuple
+
 
 raytracer :: IO ()
 raytracer = let
@@ -144,6 +148,7 @@ raytracer = let
         let content = concat $ (fmap (colorToString . gammaCorrection) colors)
         writeFile "/home/markus/out.ppm" (header ++ content)
 
+
 colorToString :: V3 Double -> String
 colorToString c = (show r) ++ " " ++ (show g) ++ " " ++ (show b) ++ " " where 
     V3 r g b = toPPM c
@@ -152,14 +157,18 @@ colorToString c = (show r) ++ " " ++ (show g) ++ " " ++ (show b) ++ " " where
         toWord8 :: Double -> Word8
         toWord8 = fromIntegral . (round :: Double -> Integer)
 
+
 gammaCorrection :: V3 Double -> V3 Double
 gammaCorrection = fmap sqrt
+
 
 averageColor :: [V3 Double] -> V3 Double
 averageColor vs = (sum vs) /. (fromIntegral $ length vs) where
 
+
 at :: Ray -> Double -> V3 Double
 at (Ray o d) t = o + t .* d
+
 
 backgroundGradient :: Ray -> V3 Double
 backgroundGradient (Ray _ d) = (1 - t) .* white + t .* blue
@@ -174,8 +183,8 @@ backgroundGradient (Ray _ d) = (1 - t) .* white + t .* blue
 --        \         /^      
 --         \   ^   / .      
 --          \  |n /  .      
---          .\ | /   . 2 * b * n
---  len b ~>. \|/    .      
+--           \ | /   . 2 * b * n
+--            \|/    .      
 --   ---------->-----------
 --             |\    ^     
 --             | \   .     
@@ -186,11 +195,14 @@ backgroundGradient (Ray _ d) = (1 - t) .* white + t .* blue
 mirrorAlong :: V3 Double -> V3 Double -> V3 Double
 mirrorAlong n x = x - (2 * b .* n) where b = dot x $ unit n
 
+
 traceRays :: [Shape] -> [Ray] -> [V3 Double]
 traceRays shapes = fmap (traceRay shapes)
 
+
 traceRay :: [Shape] -> Ray -> V3 Double
 traceRay = traceRay' 0
+
 
 traceRay' :: Int -> [Shape] -> Ray -> V3 Double
 traceRay' 5  _ r = backgroundGradient r
